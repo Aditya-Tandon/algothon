@@ -47,16 +47,15 @@ def calculate_macd(df, fast_period=100, slow_period=1000, signal_period=10, stra
         })
     
     return results
-def construct_portfolio(macd_results, max_position=0.1, min_position=-0.1, momentum_threshold=0.05):
+def construct_portfolio(macd_results, top_n=10, position_size=0.1):
     """
-    Construct a portfolio with weights proportional to momentum strength and a threshold for certainty.
-    
+    Construct a portfolio with long positions for the top N strategies based on momentum scores.
+
     Parameters:
         macd_results (dict): MACD results for each strategy.
-        max_position (float): Maximum position size.
-        min_position (float): Minimum position size.
-        momentum_threshold (float): Minimum momentum strength to consider a position.
-        
+        top_n (int): Number of top strategies to include in the portfolio.
+        position_size (float): Fixed position size for each selected strategy.
+
     Returns:
         dict: Final portfolio weights.
     """
@@ -64,58 +63,21 @@ def construct_portfolio(macd_results, max_position=0.1, min_position=-0.1, momen
     scores = {}
     for strategy, data in macd_results.items():
         if len(data) > 0:
-            # Get momentum direction and strength
-            direction = data['momentum_signal'].iloc[-1]
+            # Get momentum strength
             strength = data['momentum_strength'].iloc[-1]
-            macd_value = data['macd_line'].iloc[-1]
             
-            # Only include strategies with sufficient momentum strength
-            if strength > momentum_threshold:
-                score = direction * (
-                    0.5 * strength +  # Higher weight for histogram strength
-                    0.3 * abs(macd_value) +  # Include magnitude of MACD line
-                    0.2 * abs(data['macd_line'].pct_change().iloc[-1])  # Recent momentum change
-                )
-                scores[strategy] = score
+            # Only include strategies with positive momentum
+            if data['momentum_signal'].iloc[-1] == 1:  # Long signal
+                scores[strategy] = strength
     
-    # If no valid scores, return zero weights
-    if not scores:
-        return {strategy: 0 for strategy in macd_results.keys()}
+    # Select top N strategies by strength
+    top_strategies = sorted(scores, key=scores.get, reverse=True)[:top_n]
     
-    # Normalize scores to initial weights
-    total_abs_score = sum(abs(score) for score in scores.values())
-    if total_abs_score > 0:
-        initial_weights = {k: (v / total_abs_score) for k, v in scores.items()}
-    else:
-        return {k: 0 for k in macd_results.keys()}
+    # Assign fixed weight to selected strategies
+    portfolio_weights = {strategy: position_size if strategy in top_strategies else 0 
+                         for strategy in macd_results.keys()}
     
-    # Scale weights to satisfy constraints while maintaining proportions
-    total_positive = sum(w for w in initial_weights.values() if w > 0)
-    total_negative = abs(sum(w for w in initial_weights.values() if w < 0))
-    
-    if total_positive > 0:
-        positive_scale = min(1.0, max_position * len([w for w in initial_weights.values() if w > 0]) / total_positive)
-    else:
-        positive_scale = 1.0
-        
-    if total_negative > 0:
-        negative_scale = min(1.0, abs(min_position) * len([w for w in initial_weights.values() if w < 0]) / total_negative)
-    else:
-        negative_scale = 1.0
-    
-    # Apply scaling
-    scaled_weights = {}
-    for k, w in initial_weights.items():
-        if w > 0:
-            scaled_weights[k] = w * positive_scale
-        else:
-            scaled_weights[k] = w * negative_scale
-            
-    # Final normalization to sum to 1
-    total_weight = sum(scaled_weights.values())
-    final_weights = {k: (v / total_weight if total_weight != 0 else 0) for k, v in scaled_weights.items()}
-    
-    return final_weights
+    return portfolio_weights
 
 def get_portfolio_stats(weights):
     """Previous stats calculation remains the same"""
